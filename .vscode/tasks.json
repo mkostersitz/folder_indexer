@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Folder Indexer",
+			"type": "shell",
+			"command": "${workspaceFolder}/.venv/Scripts/folder-indexer.exe",
+			"args": [
+				"--help"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}

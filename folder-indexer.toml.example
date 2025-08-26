@@ -1,0 +1,41 @@
+# Example configuration for folder indexer
+# Save this as .folder-indexer.toml in your home directory or project root
+
+[indexing]
+# Patterns to ignore (gitignore syntax)
+ignore_patterns = [
+    "*.pyc",
+    "__pycache__/",
+    ".git/",
+    "node_modules/",
+    "*.log",
+    ".DS_Store",
+    "Thumbs.db",
+    "*.tmp",
+    "*.swp",
+    ".vscode/",
+    ".idea/",
+    "*.class",
+    "target/",
+    "build/",
+    "dist/"
+]
+
+# Maximum file size to index content (in MB)
+max_file_size = 10
+
+# Whether to index hidden files (files starting with .)
+include_hidden = false
+
+# Whether to follow symbolic links
+follow_symlinks = false
+
+[search]
+# Maximum number of results to return
+max_results = 100
+
+# Whether to highlight search terms in results
+highlight = true
+
+# Fuzzy search threshold (0.0 to 1.0)
+fuzzy_threshold = 0.8
