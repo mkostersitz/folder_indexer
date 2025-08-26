@@ -175,26 +175,22 @@ folder-indexer find --recent 7
 
 ## Quick Start
 
-### Index a Directory
+**TL;DR:** Want to jump right in? Here's the fastest way:
+
 ```bash
-folder-indexer index /path/to/directory
+# 1. Clone and install
+git clone https://github.com/yourusername/folder-indexer.git
+cd folder-indexer
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e .
+
+# 2. Index and search
+folder-indexer index .
+folder-indexer search "*.py"
 ```
 
-### Search for Files
-```bash
-folder-indexer search "filename.txt"
-folder-indexer search --pattern "*.py" --content "def main"
-```
-
-### Watch for Changes
-```bash
-folder-indexer watch /path/to/directory
-```
-
-### List Indexed Directories
-```bash
-folder-indexer list
-```
+For detailed installation and usage instructions, see the sections below.
 
 ## Usage
 
