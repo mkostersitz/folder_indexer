@@ -38,14 +38,34 @@ class DirectoryIndexer:
         self.config = config or Config()
         self.console = Console()
         self.index_dir = get_index_dir()
+        self.ix = None
         self._setup_index()
         
     def _setup_index(self):
         """Initialize or open the search index."""
-        if not index.exists_in(str(self.index_dir)):
-            self.ix = index.create_in(str(self.index_dir), self.SCHEMA)
-        else:
-            self.ix = index.open_dir(str(self.index_dir))
+        try:
+            if not index.exists_in(str(self.index_dir)):
+                self.ix = index.create_in(str(self.index_dir), self.SCHEMA)
+            else:
+                self.ix = index.open_dir(str(self.index_dir))
+        except Exception as e:
+            # If there's a lock or other issue, wait and try again
+            import time
+            time.sleep(0.1)
+            try:
+                if not index.exists_in(str(self.index_dir)):
+                    self.ix = index.create_in(str(self.index_dir), self.SCHEMA)
+                else:
+                    self.ix = index.open_dir(str(self.index_dir))
+            except Exception as e2:
+                # Last resort: clear and recreate
+                try:
+                    import shutil
+                    shutil.rmtree(self.index_dir, ignore_errors=True)
+                    self.index_dir.mkdir(parents=True, exist_ok=True)
+                    self.ix = index.create_in(str(self.index_dir), self.SCHEMA)
+                except Exception as e3:
+                    raise RuntimeError(f"Failed to create search index after multiple attempts: {e3}") from e
     
     def _should_ignore(self, path: Path) -> bool:
         """Check if a path should be ignored based on patterns."""
@@ -78,6 +98,33 @@ class DirectoryIndexer:
         except (OSError, IOError, UnicodeDecodeError):
             return ""
     
+    def _count_items(self, directory: Path) -> int:
+        """Count total number of files and directories to be indexed."""
+        count = 0
+        try:
+            for root, dirs, files in os.walk(directory, followlinks=self.config.indexing.follow_symlinks):
+                root_path = Path(root)
+                
+                # Filter directories to ignore
+                dirs[:] = [d for d in dirs if not self._should_ignore(root_path / d)]
+                
+                # Count directories
+                for dir_name in dirs:
+                    dir_path = root_path / dir_name
+                    if not self._should_ignore(dir_path):
+                        count += 1
+                
+                # Count files
+                for file_name in files:
+                    file_path = root_path / file_name
+                    if not self._should_ignore(file_path):
+                        count += 1
+                        
+        except (OSError, IOError) as e:
+            self.console.print(f"[red]Error counting items in {directory}: {e}[/red]")
+        
+        return count
+
     def _scan_directory(self, directory: Path) -> Iterator[Dict[str, Any]]:
         """Scan directory and yield file information."""
         try:
@@ -147,27 +194,44 @@ class DirectoryIndexer:
         
         indexed_count = 0
         
+        # Count total items for progress tracking
+        if show_progress:
+            self.console.print(f"[yellow]Counting items in {directory}...[/yellow]")
+            total_items = self._count_items(directory)
+            self.console.print(f"[green]Found {total_items:,} items to index[/green]")
+        else:
+            total_items = None
+        
         with Progress(console=self.console, disable=not show_progress) as progress:
+            task = None
             if show_progress:
-                task = progress.add_task(f"Indexing {directory}", total=None)
+                task = progress.add_task(f"Indexing {directory.name}", total=total_items)
             
-            writer = self.ix.writer()
             try:
-                for item in self._scan_directory(directory):
-                    writer.add_document(**item)
-                    indexed_count += 1
-                    
-                    if show_progress and indexed_count % 100 == 0:
-                        progress.update(task, description=f"Indexed {indexed_count} items from {directory}")
-                
-                writer.commit()
-                
+                with self.ix.writer() as writer:
+                    for item in self._scan_directory(directory):
+                        writer.add_document(**item)
+                        indexed_count += 1
+                        
+                        if show_progress and task is not None:
+                            if total_items and total_items > 0:
+                                percentage = (indexed_count / total_items) * 100
+                                progress.update(
+                                    task, 
+                                    advance=1,
+                                    description=f"Indexed {indexed_count:,}/{total_items:,} ({percentage:.1f}%) items"
+                                )
+                            else:
+                                progress.update(
+                                    task, 
+                                    advance=1,
+                                    description=f"Indexed {indexed_count:,} items"
+                                )
             except Exception as e:
-                writer.cancel()
                 raise e
         
         if show_progress:
-            self.console.print(f"[green]Successfully indexed {indexed_count} items from {directory}[/green]")
+            self.console.print(f"[green]Successfully indexed {indexed_count:,} items from {directory}[/green]")
         
         return indexed_count
     
