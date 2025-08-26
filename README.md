@@ -30,7 +30,7 @@ A fast and efficient Python tool for indexing directory structures and enabling 
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/folder-indexer.git
+   git clone https://github.com/mkostersitz/folder-indexer.git
    cd folder-indexer
    ```
 
