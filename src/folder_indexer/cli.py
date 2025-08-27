@@ -33,10 +33,16 @@ def cli(ctx):
 @click.argument('directory', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
 @click.option('--no-progress', is_flag=True, help='Disable progress display')
 @click.option('--filenames-only', is_flag=True, help='Index only filenames and metadata (skip content extraction for faster indexing)')
+@click.option('--verbose-errors', is_flag=True, help='Show detailed error messages for files that cannot be indexed')
 @click.pass_context
-def index(ctx, directory: Path, no_progress: bool, filenames_only: bool):
+def index(ctx, directory: Path, no_progress: bool, filenames_only: bool, verbose_errors: bool):
     """Index a directory structure for fast searching."""
     config = ctx.obj['config']
+    
+    # Override the verbose_errors setting if specified
+    if verbose_errors:
+        config.indexing.verbose_errors = True
+    
     indexer = DirectoryIndexer(config)
     
     try:

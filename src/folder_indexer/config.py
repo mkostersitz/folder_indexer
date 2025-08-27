@@ -19,6 +19,7 @@ class IndexingConfig:
     max_file_size: int = 10  # MB
     include_hidden: bool = False
     follow_symlinks: bool = False
+    verbose_errors: bool = False  # Show detailed error messages for skipped files
 
 
 @dataclass

@@ -40,6 +40,7 @@ class DirectoryIndexer:
         self.console = Console()
         self.index_dir = get_index_dir()
         self.ix = None
+        self.skipped_files = 0  # Track files skipped due to errors
         self._setup_index()
         
     def _setup_index(self):
@@ -133,9 +134,25 @@ class DirectoryIndexer:
             directory: Path to scan
             filenames_only: If True, skip content extraction for faster indexing
         """
+        def handle_walk_error(error):
+            """Handle errors during os.walk traversal."""
+            if self.config.indexing.verbose_errors:
+                self.console.print(f"[yellow]Directory traversal error: {error}[/yellow]")
+            self.skipped_files += 1
+        
         try:
-            for root, dirs, files in os.walk(directory, followlinks=self.config.indexing.follow_symlinks):
+            for root, dirs, files in os.walk(directory, 
+                                           followlinks=self.config.indexing.follow_symlinks,
+                                           onerror=handle_walk_error):
                 root_path = Path(root)
+                
+                # Skip paths that are too long
+                if len(str(root_path)) > 240:  # Leave buffer for filenames
+                    if self.config.indexing.verbose_errors:
+                        self.console.print(f"[yellow]Skipping directory with very long path: {str(root_path)[:100]}...[/yellow]")
+                    self.skipped_files += 1
+                    dirs.clear()  # Don't recurse into subdirectories
+                    continue
                 
                 # Filter directories to ignore
                 dirs[:] = [d for d in dirs if not self._should_ignore(root_path / d)]
@@ -145,18 +162,30 @@ class DirectoryIndexer:
                     dir_path = root_path / dir_name
                     if self._should_ignore(dir_path):
                         continue
+                    
+                    try:
+                        # Check for path length issues
+                        path_str = str(dir_path)
+                        if len(path_str) > 250:  # Leave some buffer
+                            self.console.print(f"[yellow]Skipping directory with very long path ({len(path_str)} chars): {path_str[:100]}...[/yellow]")
+                            continue
                         
-                    yield {
-                        'path': str(dir_path),
-                        'filename': dir_name,
-                        'dirname': str(root_path),
-                        'content': "",
-                        'extension': "",
-                        'size': 0,
-                        'modified': datetime.fromtimestamp(dir_path.stat().st_mtime),
-                        'is_directory': "true",
-                        'hash': ""
-                    }
+                        yield {
+                            'path': path_str,
+                            'filename': dir_name,
+                            'dirname': str(root_path),
+                            'content': "",
+                            'extension': "",
+                            'size': 0,
+                            'modified': datetime.fromtimestamp(dir_path.stat().st_mtime),
+                            'is_directory': "true",
+                            'hash': ""
+                        }
+                    except (OSError, IOError, PermissionError) as e:
+                        if self.config.indexing.verbose_errors:
+                            self.console.print(f"[yellow]Error processing directory {dir_name}: {e}[/yellow]")
+                        self.skipped_files += 1
+                        continue
                 
                 # Process files
                 for file_name in files:
@@ -165,6 +194,15 @@ class DirectoryIndexer:
                         continue
                     
                     try:
+                        # Check for path length issues (Windows has a 260 character limit by default)
+                        path_str = str(file_path)
+                        if len(path_str) > 250:  # Leave some buffer
+                            if self.config.indexing.verbose_errors:
+                                self.console.print(f"[yellow]Skipping file with very long path ({len(path_str)} chars): {path_str[:100]}...[/yellow]")
+                            self.skipped_files += 1
+                            continue
+                        
+                        # Try to access file information
                         stat_info = file_path.stat()
                         
                         # Skip content extraction if filenames_only is True
@@ -176,7 +214,7 @@ class DirectoryIndexer:
                             file_hash = self._get_file_hash(file_path) if file_path.is_file() else ""
                         
                         yield {
-                            'path': str(file_path),
+                            'path': path_str,
                             'filename': file_name,
                             'dirname': str(root_path),
                             'content': content,
@@ -186,8 +224,33 @@ class DirectoryIndexer:
                             'is_directory': "false",
                             'hash': file_hash
                         }
-                    except (OSError, IOError) as e:
-                        self.console.print(f"[red]Error processing {file_path}: {e}[/red]")
+                    except FileNotFoundError as e:
+                        if self.config.indexing.verbose_errors:
+                            self.console.print(f"[yellow]File not found (possibly moved/deleted): {file_name}[/yellow]")
+                        self.skipped_files += 1
+                        continue
+                    except PermissionError as e:
+                        if self.config.indexing.verbose_errors:
+                            self.console.print(f"[yellow]Permission denied: {file_name}[/yellow]")
+                        self.skipped_files += 1
+                        continue
+                    except OSError as e:
+                        # Handle various OS errors including path too long, invalid characters, etc.
+                        if self.config.indexing.verbose_errors:
+                            if e.winerror == 3:  # ERROR_PATH_NOT_FOUND
+                                self.console.print(f"[yellow]Path not found: {file_name}[/yellow]")
+                            elif e.winerror == 123:  # ERROR_INVALID_NAME
+                                self.console.print(f"[yellow]Invalid filename: {file_name}[/yellow]")
+                            elif e.winerror == 206:  # ERROR_FILENAME_EXCED_RANGE
+                                self.console.print(f"[yellow]Filename too long: {file_name}[/yellow]")
+                            else:
+                                self.console.print(f"[yellow]OS error processing {file_name}: {e}[/yellow]")
+                        self.skipped_files += 1
+                        continue
+                    except (IOError, ValueError, UnicodeError) as e:
+                        if self.config.indexing.verbose_errors:
+                            self.console.print(f"[yellow]Error processing {file_name}: {e}[/yellow]")
+                        self.skipped_files += 1
                         continue
                         
         except (OSError, IOError) as e:
@@ -211,6 +274,8 @@ class DirectoryIndexer:
         # First, remove any existing entries for this directory
         self.remove_directory(directory, show_progress=False)
         
+        # Reset skipped files counter
+        self.skipped_files = 0
         indexed_count = 0
         
         # Count total items for progress tracking
@@ -257,6 +322,8 @@ class DirectoryIndexer:
         
         if show_progress:
             self.console.print(f"[green]Successfully indexed {indexed_count:,} items from {directory}[/green]")
+            if self.skipped_files > 0:
+                self.console.print(f"[yellow]Skipped {self.skipped_files:,} files due to access issues (paths too long, permissions, etc.)[/yellow]")
         
         return indexed_count
     
