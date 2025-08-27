@@ -32,17 +32,19 @@ def cli(ctx):
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
 @click.option('--no-progress', is_flag=True, help='Disable progress display')
+@click.option('--filenames-only', is_flag=True, help='Index only filenames and metadata (skip content extraction for faster indexing)')
 @click.pass_context
-def index(ctx, directory: Path, no_progress: bool):
+def index(ctx, directory: Path, no_progress: bool, filenames_only: bool):
     """Index a directory structure for fast searching."""
     config = ctx.obj['config']
     indexer = DirectoryIndexer(config)
     
     try:
-        count = indexer.index_directory(directory, show_progress=not no_progress)
-        console.print(f"[green]✓ Successfully indexed {count} items from {directory}[/green]")
+        count = indexer.index_directory(directory, show_progress=not no_progress, filenames_only=filenames_only)
+        mode = "filenames only" if filenames_only else "with content"
+        console.print(f"[green]v Successfully indexed {count} items from {directory} ({mode})[/green]")
     except Exception as e:
-        console.print(f"[red]✗ Error indexing directory: {e}[/red]")
+        console.print(f"[red]x Error indexing directory: {e}[/red]")
         sys.exit(1)
 
 

@@ -126,8 +126,13 @@ class DirectoryIndexer:
         
         return count
 
-    def _scan_directory(self, directory: Path) -> Iterator[Dict[str, Any]]:
-        """Scan directory and yield file information."""
+    def _scan_directory(self, directory: Path, filenames_only: bool = False) -> Iterator[Dict[str, Any]]:
+        """Scan directory and yield file information.
+        
+        Args:
+            directory: Path to scan
+            filenames_only: If True, skip content extraction for faster indexing
+        """
         try:
             for root, dirs, files in os.walk(directory, followlinks=self.config.indexing.follow_symlinks):
                 root_path = Path(root)
@@ -161,7 +166,14 @@ class DirectoryIndexer:
                     
                     try:
                         stat_info = file_path.stat()
-                        content = self._extract_content(file_path) if file_path.is_file() else ""
+                        
+                        # Skip content extraction if filenames_only is True
+                        if filenames_only:
+                            content = ""
+                            file_hash = ""
+                        else:
+                            content = self._extract_content(file_path) if file_path.is_file() else ""
+                            file_hash = self._get_file_hash(file_path) if file_path.is_file() else ""
                         
                         yield {
                             'path': str(file_path),
@@ -172,7 +184,7 @@ class DirectoryIndexer:
                             'size': stat_info.st_size,
                             'modified': datetime.fromtimestamp(stat_info.st_mtime),
                             'is_directory': "false",
-                            'hash': self._get_file_hash(file_path) if file_path.is_file() else ""
+                            'hash': file_hash
                         }
                     except (OSError, IOError) as e:
                         self.console.print(f"[red]Error processing {file_path}: {e}[/red]")
@@ -181,8 +193,14 @@ class DirectoryIndexer:
         except (OSError, IOError) as e:
             self.console.print(f"[red]Error scanning {directory}: {e}[/red]")
     
-    def index_directory(self, directory: Path, show_progress: bool = True) -> int:
-        """Index a directory structure."""
+    def index_directory(self, directory: Path, show_progress: bool = True, filenames_only: bool = False) -> int:
+        """Index a directory structure.
+        
+        Args:
+            directory: Path to index
+            show_progress: Whether to show progress bar
+            filenames_only: If True, skip content extraction for faster indexing
+        """
         directory = directory.resolve()
         if not directory.exists():
             raise FileNotFoundError(f"Directory not found: {directory}")
@@ -206,11 +224,12 @@ class DirectoryIndexer:
         with Progress(console=self.console, disable=not show_progress) as progress:
             task = None
             if show_progress:
-                task = progress.add_task(f"Indexing {directory.name}", total=total_items)
+                mode_desc = "filenames only" if filenames_only else "with content"
+                task = progress.add_task(f"Indexing {directory.name} ({mode_desc})", total=total_items)
             
             try:
                 with self.ix.writer() as writer:
-                    for item in self._scan_directory(directory):
+                    for item in self._scan_directory(directory, filenames_only=filenames_only):
                         try:
                             writer.add_document(**item)
                             indexed_count += 1
