@@ -5,6 +5,7 @@ Core indexing functionality for scanning and indexing directory structures.
 import os
 import time
 import hashlib
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Iterator, Optional, Dict, Any, List
@@ -28,7 +29,7 @@ class DirectoryIndexer:
         dirname=TEXT(stored=True),
         content=TEXT(stored=True),
         extension=TEXT(stored=True),
-        size=NUMERIC(stored=True),
+        size=NUMERIC(bits=64, stored=True),  # 64-bit integers for large files
         modified=DATETIME(stored=True),
         is_directory=ID(stored=True),
         hash=ID(stored=True)
@@ -210,23 +211,28 @@ class DirectoryIndexer:
             try:
                 with self.ix.writer() as writer:
                     for item in self._scan_directory(directory):
-                        writer.add_document(**item)
-                        indexed_count += 1
-                        
-                        if show_progress and task is not None:
-                            if total_items and total_items > 0:
-                                percentage = (indexed_count / total_items) * 100
-                                progress.update(
-                                    task, 
-                                    advance=1,
-                                    description=f"Indexed {indexed_count:,}/{total_items:,} ({percentage:.1f}%) items"
-                                )
-                            else:
-                                progress.update(
-                                    task, 
-                                    advance=1,
-                                    description=f"Indexed {indexed_count:,} items"
-                                )
+                        try:
+                            writer.add_document(**item)
+                            indexed_count += 1
+                            
+                            if show_progress and task is not None:
+                                if total_items and total_items > 0:
+                                    percentage = (indexed_count / total_items) * 100
+                                    progress.update(
+                                        task, 
+                                        advance=1,
+                                        description=f"Indexed {indexed_count:,}/{total_items:,} ({percentage:.1f}%) items"
+                                    )
+                                else:
+                                    progress.update(
+                                        task, 
+                                        advance=1,
+                                        description=f"Indexed {indexed_count:,} items"
+                                    )
+                        except Exception as e:
+                            # Log the specific item that failed but continue
+                            self.console.print(f"[yellow]Warning: Failed to index {item.get('path', 'unknown')}: {e}[/yellow]")
+                            continue
             except Exception as e:
                 raise e
         
@@ -301,9 +307,24 @@ class DirectoryIndexer:
         """Rebuild the entire search index."""
         directories = self.get_indexed_directories()
         
-        # Clear the index
-        writer = self.ix.writer()
-        writer.commit(mergetype=index.CLEAR)
+        # Recreate the index with new schema
+        try:
+            # Close current index
+            if self.ix:
+                self.ix.close()
+            
+            # Remove old index files
+            import shutil
+            if self.index_dir.exists():
+                shutil.rmtree(self.index_dir)
+            
+            # Recreate the index
+            self._setup_index()
+            
+        except Exception as e:
+            self.console.print(f"[yellow]Warning during index cleanup: {e}[/yellow]")
+            # Try to setup index anyway
+            self._setup_index()
         
         total_indexed = 0
         
@@ -314,5 +335,4 @@ class DirectoryIndexer:
             else:
                 self.console.print(f"[yellow]Skipping non-existent directory: {directory}[/yellow]")
         
-        self.console.print(f"[green]Rebuilt index with {total_indexed} total items[/green]")
         return total_indexed
